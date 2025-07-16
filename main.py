@@ -4,36 +4,43 @@ import json
 import re
 from typing import Dict, Any
 from dotenv import load_dotenv
+
+# AutoGen agent chat
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_agentchat.conditions import TextMentionTermination
 from autogen_agentchat.ui import Console
+
+# OpenAI-compatible model client via OpenRouter
 from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen_core.models import SystemMessage, UserMessage
+import logging  # Hàm tạo sự kiện Google Calendar (bạn cần có file google_calendar.py)
 from google_calendar import create_events_from_plan
-# Load environment variables
+
+# Load biến môi trường từ .env
 load_dotenv()
 
-# Model setup (Gemini via OpenRouter)
+
+# logging.basicConfig(level=logging.INFO)
+
+
+# Khởi tạo model Gemini qua OpenRouter
 model_client = OpenAIChatCompletionClient(
-    model="gemini-1.5-flash-8b",
-    api_key=os.getenv("GEMINI_API_KEY")
+    model="gemini-1.5-flash",
+    api_key=os.getenv("GEMINI_API_KEY")  # Biến môi trường GEMINI_API_KEY trong .env
 )
 
-# Tool: generate study plan
-def generate_study_plan(prompt: str) -> Dict[str, Any]:
+# ----------------------------------------------------
+# Hàm async gọi model và xử lý kết quả JSON
+async def generate_study_plan_async(prompt: str) -> str:
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Bạn là trợ lý AI giúp lập lịch học cá nhân. "
-                "Chỉ trả về JSON đúng format được đặt giữa <json>...</json>. "
-                "Không thêm bất kỳ lời giải thích nào bên ngoài JSON."
-            )
-        },
-        {
-            "role": "user",
-            "content": f"""
-Tạo kế hoạch học tập cho yêu cầu sau: \"{prompt}\"
+        SystemMessage(
+            content="Bạn là trợ lý AI giúp lập lịch học cá nhân. "
+                    "Chỉ trả về JSON đúng format được đặt giữa <json>...</json>. "
+                    "Không thêm bất kỳ lời giải thích nào bên ngoài JSON."
+        ),
+        UserMessage(
+            content=f"""Tạo kế hoạch học tập cho yêu cầu sau: \"{prompt}\"
 Kết quả phải nằm trong thẻ <json>...</json>. Format như sau:
 
 <json>
@@ -48,24 +55,30 @@ Kết quả phải nằm trong thẻ <json>...</json>. Format như sau:
   ]
 }}
 </json>
-"""
-        }
+""",
+            source="user"
+        )
     ]
 
     try:
-        response = asyncio.run(model_client.create(messages=messages))
-        content = response.choices[0].message.content
-
+        response = await model_client.create(messages=messages)
+        print("📦 DEBUG response:", response)
+        content = response.content
         match = re.search(r"<json>(.*?)</json>", content, re.DOTALL)
         if match:
             json_str = match.group(1).strip()
-            return json.loads(json_str)
+            return json_str
         else:
-            return {"error": "Không tìm thấy JSON hợp lệ", "raw": content}
+            return "Không tìm thấy JSON hợp lệ"
     except Exception as e:
-        return {"error": f"Lỗi khi gọi mô hình: {str(e)}"}
+        return f"Lỗi khi gọi mô hình: {str(e)}"
 
-# Tool: sync to Google Calendar
+# Hàm sync dùng cho tool (do autogen chỉ nhận sync function)
+def generate_study_plan(prompt: str) -> str:
+    return asyncio.run(generate_study_plan_async(prompt))
+
+# ----------------------------------------------------
+# Hàm thêm lịch học vào Google Calendar
 def sync_plan_to_google_calendar(plan: Dict[str, Any]) -> str:
     try:
         create_events_from_plan(plan)
@@ -73,7 +86,8 @@ def sync_plan_to_google_calendar(plan: Dict[str, Any]) -> str:
     except Exception as e:
         return f"❌ Lỗi khi thêm vào Google Calendar: {str(e)}"
 
-# AI Agent setup
+# ----------------------------------------------------
+# Khởi tạo AssistantAgent (AI)
 study_agent = AssistantAgent(
     name="StudyAgent",
     model_client=model_client,
@@ -86,7 +100,7 @@ QUY TẮC:
     - KHÔNG tự tạo văn bản thủ công.
     - Nếu kế hoạch được tạo hợp lệ (trả về JSON), hãy gọi sync_plan_to_google_calendar(plan).
     - Chỉ trình bày kết quả sau khi gọi hàm.
-    - Kết thúc khi người dùng gõ \"KẾT THÚC\".
+    - Kết thúc khi người dùng gõ "KẾT THÚC".
 
 CẤU TRÚC LỊCH:
 Mỗi sự kiện cần có:
@@ -99,16 +113,19 @@ Không bao giờ tự soạn kế hoạch. Hãy luôn sử dụng công cụ.
 """
 )
 
+# Tạo agent user nhập tay
 user_proxy = UserProxyAgent("user_proxy", input_func=input)
 
+# Tổ chức hội thoại vòng tròn giữa 2 agent
 team = RoundRobinGroupChat(
     participants=[study_agent, user_proxy],
     termination_condition=TextMentionTermination("KẾT THÚC")
 )
 
-# Main function
+# ----------------------------------------------------
+# Main
 async def main():
-    print("Chương trình AI Study Scheduler đã sẵn sàng. Gõ 'KẾT THÚC' để thoát.\n")
+    print("🎓 AI Study Scheduler đã sẵn sàng. Gõ 'KẾT THÚC' để thoát.\n")
     task = "Chào bạn! Bạn muốn học gì? Trong thời gian nào?"
     await Console(team.run_stream(task=task))
 
