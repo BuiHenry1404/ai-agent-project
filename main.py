@@ -10,13 +10,12 @@ from autogen_core.models import SystemMessage
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.conditions import TextMentionTermination
 from autogen_agentchat.ui import Console
-# from autogen_agentchat.tools import tools
 
 # Model client
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 # Google Calendar sync function
-from google_calendar import create_events_from_plan  # bạn cần định nghĩa hàm này
+from google_calendar import create_events_from_plan
 
 # Load environment
 load_dotenv()
@@ -24,11 +23,16 @@ load_dotenv()
 # === MODEL CLIENT ===
 model_client = OpenAIChatCompletionClient(
     model="gemini-2.5-flash",
-    api_key=os.getenv("GEMINI_API_KEY")
+    api_key=os.getenv("GEMINI_API_KEY"),
 )
 
 # === TOOL 1: Extract JSON from content ===
 def extract_json_from_response(content: str) -> dict:
+    try:
+        content = json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
     match = re.search(r"<json>(.*?)</json>", content, re.DOTALL) or \
             re.search(r"```json(.*?)```", content, re.DOTALL)
     if not match:
@@ -41,38 +45,52 @@ def sync_to_google_calendar(json_data: dict) -> str:
     return "✅ Lịch học đã được đồng bộ lên Google Calendar."
 
 # === TOOL 3: Parser tool - parse and sync in one go ===
-def parse_and_sync_schedule(text: str) -> str:
-    json_data = extract_json_from_response(text)
+def parse_and_sync_schedule(text_or_json: str | dict) -> str:
+    if isinstance(text_or_json, dict):
+        json_data = text_or_json  # Đã là JSON thì không cần parse
+    else:
+        json_data = extract_json_from_response(text_or_json)
     return sync_to_google_calendar(json_data)
 
 # === AGENT 1: Gợi ý kế hoạch học tập ===
 planner_agent = AssistantAgent(
     name="PlannerAgent",
     model_client=model_client,
-    system_message=
-            "Bạn là một AI chuyên lên kế hoạch học tập.\n"
-            "Hãy trò chuyện với người dùng để hiểu mục tiêu học của họ.\n"
-            "Sau đó gợi ý một lịch học hợp lý, mỗi ngày một buổi học.\n"
-            "Nếu bạn muốn tạo JSON kế hoạch học thì hãy dùng định dạng sau và dừng phản hồi:\n\n"
-            "<json>\n"
-            "{\n  \"events\": [\n    {\n      \"title\": \"Học HTML\",\n"
-            "      \"description\": \"Buổi học đầu tiên\",\n"
-            "      \"start\": \"2025-07-25T19:00:00+07:00\",\n"
-            "      \"end\": \"2025-07-25T20:30:00+07:00\"\n    }\n  ]\n}\n</json>\n\n"
-        
-    )
+    system_message="""You are an AI specialized in creating study plans.  
+Have a conversation with the user to understand their learning goals.  
+Then suggest a suitable study schedule, with one study session per day.  
+If you want to create a study plan in JSON format, use the structure below and stop your response:
+
+<json>
+{
+  "events": [
+    {
+      "title": "Learn HTML",
+      "description": "First study session",
+      "start": "2025-07-25T19:00:00+07:00",
+      "end": "2025-07-25T20:30:00+07:00"
+    }
+  ]
+}
+</json>
+
+not print json for user. just print by text.
 
 
-# === AGENT 2: Xử lý JSON và đồng bộ calendar ===
+"""
+
+
+)
+
+# === AGENT 2: Đồng bộ JSON lên lịch ===
 calendar_agent = AssistantAgent(
     name="CalendarAgent",
     model_client=model_client,
     tools=[parse_and_sync_schedule],
-    system_message=
-            "Bạn là một agent nền, không giao tiếp với người dùng.\n"
-            "Nhiệm vụ của bạn là phát hiện JSON chứa kế hoạch học và gọi tool `parse_and_sync_schedule` để đồng bộ lên Google Calendar.\n"
-            "Không trả lời hay hiển thị gì. Chỉ xử lý rồi kết thúc."
-        )
+    system_message="""You are a backend agent and do not communicate with the user.  
+Your task is to detect JSON containing the study plan and call the `parse_and_sync_schedule` tool to sync it to Google Calendar.  
+Do not reply or display anything. Just process and terminate."""
+)
 
 # === USER AGENT ===
 user_proxy = UserProxyAgent(name="User", input_func=input)
@@ -81,24 +99,31 @@ user_proxy = UserProxyAgent(name="User", input_func=input)
 team = SelectorGroupChat(
     participants=[user_proxy, planner_agent, calendar_agent],
     model_client=model_client,
-  selector_prompt = """
-Bạn là bộ chọn tác nhân phù hợp cho mỗi vòng đối thoại.
+    selector_prompt="""
+Select the most appropriate agent to respond next.
 
-Quy tắc:
-1. Nếu tin nhắn người dùng hoặc assistant chứa đoạn <json>...</json> hoặc ```json ... ``` → chọn CalendarAgent.
-2. Nếu không có JSON → chọn PlannerAgent để tiếp tục trò chuyện.
-3. Nếu không rõ → chọn User để hỏi thêm.
+Roles:
+- PlannerAgent: Explores user's study goals, suggests a suitable learning plan
+- CalendarAgent: Detects and processes study schedule JSON and syncs to calendar
+- User: Represents the human user
 
-Chỉ chọn **một** agent phản hồi mỗi lượt.
+Conversation history:
+{history}
+
+Selection rules:
+1. If the user just shared new study info or confirmed schedule → select PlannerAgent
+2. If a message (from user or PlannerAgent) contains a JSON block (e.g. <json>...</json> or ```json ... ```) → select CalendarAgent
+3. After CalendarAgent finishes syncing, or if unsure → select User
+
+Only select one agent per turn.
 """,
     termination_condition=TextMentionTermination("KẾT THÚC")
 )
 
 # === MAIN ===
 async def main():
-    print("🎓 AI Lập Lịch Học đã sẵn sàng. Gõ 'KẾT THÚC' để thoát.\n")
-    await Console(team.run_stream(task="Chào bạn! Bạn có thể giúp gì tôi ?"))
-    print(team.chat_history.messages[-1])
+    print("🎓 AI Study Planner is ready. Type 'KẾT THÚC' to exit.\n")
+    await Console(team.run_stream(task="Hello! Can you help me?"))
 
 if __name__ == "__main__":
     asyncio.run(main())
