@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.conditions import TextMentionTermination
-from autogen_agentchat.ui import Console
+# from autogen_agentchat.ui import Console
 
 # Model client
 from autogen_ext.models.openai import OpenAIChatCompletionClient
@@ -15,12 +15,14 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 # Google Calendar sync function
 from google_calendar import create_events_from_plan
 
+from file_stream_console import FileStreamConsole
+
 # Load environment variables
 load_dotenv()
 
 # === MODEL CLIENT ===
 model_client = OpenAIChatCompletionClient(
-    model="gemini-2.5-flash",
+    model="gemini-2.0-flash",
     api_key=os.getenv("GEMINI_API_KEY"),
 )
 
@@ -142,7 +144,12 @@ Respond with only one name from: {participants}
 # === MAIN ===
 async def main():
     print("🎓 AI Study Planner is ready. Type 'EXIT' to quit.\n")
-    await Console(team.run_stream(task="Hello! Can you help me schedule my study sessions?"))
+    file_stream = FileStreamConsole("chat_log.txt")
+    
+    result = await file_stream.process_stream(
+        team.run_stream(task="Hello! Can you help me schedule my study sessions?"),
+        output_stats=True
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
