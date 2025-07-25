@@ -1,0 +1,30 @@
+---------- TextMessage (user) ----------
+Hello! Can you help me schedule my study sessions?
+---------- TextMessage (PlannerAgent) ----------
+Of course! To create the perfect study plan for you, I need a little more information.
+
+1.  What are your learning goals? (e.g., Ace my math exam, learn Python programming, etc.)
+2.  Which subjects do you want to study?
+3.  How much time do you have available each day or week for studying?
+
+Once I have these details, I can create a study schedule tailored to your needs.
+[Prompt tokens: 241, Completion tokens: 93]
+---------- TextMessage (User) ----------
+Xin chào. Tôi muốn học python. ngày 8/8/2025 lúc 19h - 21h. Chỉ ngày đó thôi. 
+---------- TextMessage (PlannerAgent) ----------
+Tuyệt vời! Với thông tin bạn cung cấp, tôi đã tạo lịch học Python cho bạn vào ngày 8 tháng 8 năm 2025, từ 19:00 đến 21:00. Bạn có đồng ý với lịch này không?
+
+[Prompt tokens: 369, Completion tokens: 58]
+---------- TextMessage (User) ----------
+Có.
+---------- TextMessage (User) ----------
+Cám ơn bạn.
+---------- TextMessage (PlannerAgent) ----------
+
+[Prompt tokens: 516, Completion tokens: 0]
+---------- TextMessage (User) ----------
+KẾT THÚC.
+---------- TextMessage (PlannerAgent) ----------
+Chào bạn! Nếu bạn cần hỗ trợ thêm trong tương lai, đừng ngần ngại liên hệ lại nhé. Chúc bạn học tập hiệu quả!
+
+[Prompt tokens: 523, Completion tokens: 32]
