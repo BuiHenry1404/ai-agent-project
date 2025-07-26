@@ -1,139 +1,155 @@
 import asyncio
 import os
 import json
-import re
-from typing import Dict, Any
 from dotenv import load_dotenv
 
-# AutoGen agent chat
+# AutoGen
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
-from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.conditions import TextMentionTermination
-from autogen_agentchat.ui import Console
-import datetime
+# from autogen_agentchat.ui import Console
+
+# Model client
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-from autogen_core.models import SystemMessage, UserMessage
-import logging  # Import the logging module
+
+# Google Calendar sync function
 from google_calendar import create_events_from_plan
 
-# Load biến môi trường từ .env
+from file_stream_console import FileStreamConsole
+
+# Load environment variables
 load_dotenv()
 
-# logging.basicConfig(level=logging.INFO)
-
-# Khởi tạo model Gemini qua OpenRouter
+# === MODEL CLIENT ===
 model_client = OpenAIChatCompletionClient(
-    model="gemini-2.5-flash",
-    api_key=os.getenv("GEMINI_API_KEY")  # Biến môi trường GEMINI_API_KEY trong .env
+    model="gemini-2.0-flash",
+    api_key=os.getenv("GEMINI_API_KEY"),
 )
 
+# === TOOL 1: Save study schedule as JSON ===
+async def save_schedule_json(json_data: dict) -> str:
+    """Save the study schedule as JSON for Google Calendar."""
+    valid_events = []
+    for item in json_data.get("events", []):
+        try:
+            event = {
+                "summary": item["summary"],
+                "start": {
+                    "dateTime": item["start"],
+                    "timeZone": item.get("timeZone", "Asia/Ho_Chi_Minh")
+                },
+                "end": {
+                    "dateTime": item["end"],
+                    "timeZone": item.get("timeZone", "Asia/Ho_Chi_Minh")
+                },
+                "description": item.get("description", "")
+            }
+            valid_events.append(event)
+        except KeyError as e:
+            print(f"❌ Missing required field: {e} in {item}")
+    
+    if not valid_events:
+        return "❌ No valid events to save."
+    
+    with open("plan.json", "w", encoding="utf-8") as f:
+        json.dump({"events": valid_events}, f, indent=2, ensure_ascii=False)
+    
+    return "✅ JSON SAVED"
 
-def extract_json_from_response(content: str) -> dict:
-    match = re.search(r"<json>(.*?)</json>", content, re.DOTALL)
-    if not match:
-        match = re.search(r"```json(.*?)```", content, re.DOTALL)
-    if not match:
-        logging.error("Không tìm thấy phần JSON trong nội dung.")
-        raise ValueError("Không tìm thấy phần JSON trong nội dung.")
+# === TOOL 2: Load JSON and sync to Google Calendar ===
+async def load_schedule_json() -> str:
+    """Read the JSON file and sync it to Google Calendar."""
+    if not os.path.exists("plan.json"):
+        raise FileNotFoundError("❌ plan.json file not found.")
+    with open("plan.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+    create_events_from_plan(data)
+    return "✅ Study plan synced to Google Calendar."
 
-    json_str = match.group(1).strip()
-    logging.debug("Extracted JSON string:\n%s", json_str)
-
-    try:
-        data = json.loads(json_str)
-        with open("study_plan.json", "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return data
-    except Exception as e:
-        logging.error("Lỗi khi parse hoặc ghi file JSON: %s", e)
-        raise
-
-
-# ----------------------------------------------------
-# Hàm async gọi model và xử lý kết quả JSON
-async def generate_study_plan_async(prompt: str) -> Dict[str, Any]:
-    messages = [
-        SystemMessage(
-            content="Bạn là trợ lý AI giúp lập lịch học cá nhân."
-                    "Chỉ trả về JSON đúng format được đặt giữa <json>...</json>."
-                    "Không thêm bất kỳ lời giải thích nào bên ngoài JSON."
-        ),
-        UserMessage(
-            content=f"""Tạo kế hoạch học tập cho yêu cầu sau: \"{prompt}\"\nKết quả phải nằm trong thẻ <json>...</json>. Format như sau:\n\n<json>\n{{\n  \"events\": [\n    {{\n      \"title\": \"Tên buổi học\",\n      \"description\": \"Chi tiết nội dung\",\n      \"start\": \"YYYY-MM-DDTHH:MM:SS+07:00\",\n      \"end\": \"YYYY-MM-DDTHH:MM:SS+07:00\"\n    }}\n  ]\n}}\n</json>\n""",
-            source="user"
-        )
-    ]
-
-    try:
-        response = await model_client.create(messages=messages)
-        logging.info("📦 Đã nhận phản hồi từ model")
-        content = response.content
-        plan_dict = extract_json_from_response(content)
-        return plan_dict
-    except Exception as e:
-        logging.error("Lỗi khi gọi mô hình: %s", e)
-        return {"error": f"Lỗi khi gọi mô hình: {str(e)}"}
-
-
-# Hàm sync dùng cho tool (do autogen chỉ nhận sync function)
-def generate_study_plan(prompt: str) -> Dict[str, Any]:
-    return asyncio.run(generate_study_plan_async(prompt))
-
-
-# ----------------------------------------------------
-# Hàm thêm lịch học vào Google Calendar
-def sync_plan_to_google_calendar(plan: Dict[str, Any]) -> str:
-    try:
-        create_events_from_plan(plan)
-        return "✅ Đã thêm lịch học vào Google Calendar."
-    except Exception as e:
-        return f"❌ Lỗi khi thêm vào Google Calendar: {str(e)}"
-
-
-# ----------------------------------------------------
-# Khởi tạo AssistantAgent (AI)
-study_agent = AssistantAgent(
-    name="StudyAgent",
+# === AGENT 1: PlannerAgent ===
+planner_agent = AssistantAgent(
+    name="PlannerAgent",
     model_client=model_client,
-    tools=[generate_study_plan, sync_plan_to_google_calendar],
+    tools=[save_schedule_json],
     system_message="""
-Bạn là một trợ lý AI chuyên lập lịch học, sử dụng công cụ để tạo và đồng bộ lịch học.
+You are an AI specialized in creating study plans.
 
-QUY TẮC:
-    - Khi người dùng nói họ muốn lập kế hoạch học tập, bạn **bắt buộc phải gọi hàm generate_study_plan(prompt)** với nội dung yêu cầu của họ.
-    - KHÔNG tự tạo văn bản thủ công.
-    - Nếu kế hoạch được tạo hợp lệ (trả về JSON), hãy **gợi ý kế hoạch** cho người dùng dưới dạng văn bản gọn gàng (không phải JSON).
-    - Hỏi người dùng xác nhận: "Bạn có muốn thêm kế hoạch này vào Google Calendar không? (có/không)"
-    - Nếu người dùng xác nhận, hãy gọi sync_plan_to_google_calendar(plan).
-    - Chỉ trình bày kết quả sau khi gọi hàm.
-    - Kết thúc khi người dùng gõ "KẾT THÚC".
+1. Ask the user about their learning goals, subjects, and available time.
+2. Then, generate a study schedule and present it in natural language (DO NOT show JSON).
+3. If the user agrees → immediately call the `save_schedule_json` tool with JSON format like:
 
-CẤU TRÚC LỊCH:
-Mỗi sự kiện cần có:
-    - title
-    - description
-    - start (ISO 8601 format, ví dụ: 2025-07-20T19:00:00+07:00)
-    - end (ISO 8601 format)
+{
+  "events": [
+    {
+      "summary": "Learn Math",
+      "start": "2025-07-25T08:00:00",
+      "end": "2025-07-25T09:30:00",
+      "timeZone": "Asia/Ho_Chi_Minh",
+      "description": "Review integrals"
+    },
+    ...
+  ]
+}
 
-Không bao giờ tự soạn kế hoạch. Hãy luôn sử dụng công cụ.
+After calling `save_schedule_json`, do NOT say anything further. Wait for the CalendarAgent to handle syncing.
 """
 )
 
-# Tạo agent user nhập tay
-user_proxy = UserProxyAgent("user_proxy", input_func=input)
+# === AGENT 2: CalendarAgent ===
+calendar_agent = AssistantAgent(
+    name="CalendarAgent",
+    model_client=model_client,
+    tools=[load_schedule_json],
+    system_message="""
+You are a background agent that never communicates with the user.
 
-# Tổ chức hội thoại vòng tròn giữa 2 agent
-team = RoundRobinGroupChat(
-    participants=[study_agent, user_proxy],
-    termination_condition=TextMentionTermination("KẾT THÚC")
+Your only responsibility is:
+- When the tool `save_schedule_json` has just been called and returned ✅ JSON SAVED, immediately call `load_schedule_json` to sync the plan to Google Calendar.
+
+Do not reply, explain, or display anything to the user. Just sync, then finish.
+If syncing is successful, return: "✅ Study plan synced to Google Calendar."
+"""
 )
 
-# ----------------------------------------------------
-# Main
+# === USER AGENT ===
+user_proxy = UserProxyAgent(name="User", input_func=input)
+
+# === SELECTOR GROUP CHAT ===
+team = SelectorGroupChat(
+    participants=[user_proxy, planner_agent, calendar_agent],
+    model_client=model_client,
+    selector_prompt="""
+Select the most appropriate agent to respond next.
+
+Roles:
+- PlannerAgent: Chats with the user, creates a study plan, and calls `save_schedule_json` when ready.
+- CalendarAgent: If `save_schedule_json` was successfully called → calls `load_schedule_json` to sync to Google Calendar.
+- User: Provides input, requests, or confirms changes to the plan.
+
+Current conversation context:
+{history}
+
+Rules to select the next agent from {participants}:
+1. If the User is requesting or editing a study plan → select PlannerAgent
+2. If PlannerAgent has not yet called `save_schedule_json` → keep PlannerAgent
+3. If PlannerAgent just called the tool, or `"✅ JSON SAVED"` is in the history → select CalendarAgent
+4. If CalendarAgent just finished syncing → select User
+5. If unsure → select User
+
+Respond with only one name from: {participants}
+""",
+    termination_condition=TextMentionTermination("EXIT")
+)
+
+# === MAIN ===
 async def main():
-    print("🎓 AI Study Scheduler đã sẵn sàng. Gõ 'KẾT THÚC' để thoát.\n")
-    task = "Chào bạn! Bạn muốn học gì? Trong thời gian nào?"
-    await Console(team.run_stream(task=task))
+    print("🎓 AI Study Planner is ready. Type 'EXIT' to quit.\n")
+    file_stream = FileStreamConsole("chat_log.txt")
+    
+    result = await file_stream.process_stream(
+        team.run_stream(task="Hello! Can you help me schedule my study sessions?"),
+        output_stats=True
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())

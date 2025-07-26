@@ -7,10 +7,10 @@ SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def create_events_from_plan(plan: dict):
     """
-    Tạo các sự kiện từ JSON kế hoạch học và thêm vào Google Calendar người dùng.
+    Create events from the study plan JSON and add them to the user's Google Calendar.
     """
     if not plan.get("events"):
-        raise ValueError("Không có sự kiện nào trong kế hoạch.")
+        raise ValueError("No events found in the study plan.")
 
     creds = None
     if os.path.exists("token.json"):
@@ -25,17 +25,19 @@ def create_events_from_plan(plan: dict):
 
     for event_data in plan["events"]:
         event = {
-            "summary": event_data["title"],
-            "description": event_data["description"],
+            "summary": event_data.get("summary", "Study Schedule"),
+            "description": event_data.get("description", ""),
             "start": {
-                "dateTime": event_data["start"],
-                "timeZone": "Asia/Ho_Chi_Minh",
+                "dateTime": event_data["start"]["dateTime"],
+                "timeZone": event_data["start"]["timeZone"],
             },
             "end": {
-                "dateTime": event_data["end"],
-                "timeZone": "Asia/Ho_Chi_Minh",
+                "dateTime": event_data["end"]["dateTime"],
+                "timeZone": event_data["end"]["timeZone"],
             }
         }
 
         created_event = service.events().insert(calendarId="primary", body=event).execute()
-        print("📅 Tạo thành công:", created_event.get("htmlLink"))
+        print("📅 Successfully created:", created_event.get("htmlLink"))
+
+    return "✅ Study plan has been synced to Google Calendar."
