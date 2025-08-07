@@ -91,7 +91,7 @@ You are an AI specialized in creating study plans.
   ]
 }
 
-After calling `save_schedule_json`, do NOT say anything further. Wait for the CalendarAgent to handle syncing.
+After calling `save_schedule_json`, do NOT say anything further and DO NOT print the json format for user. Wait for the CalendarAgent to handle syncing.
 """
 )
 
@@ -107,7 +107,8 @@ Your only responsibility is:
 - When the tool `save_schedule_json` has just been called and returned ✅ JSON SAVED, immediately call `load_schedule_json` to sync the plan to Google Calendar.
 
 Do not reply, explain, or display anything to the user. Just sync, then finish.
-If syncing is successful, return: "✅ Study plan synced to Google Calendar."
+If syncing is successful, return: "✅ Study plan synced to Google Calendar." and print link to the calendar.
+If syncing fails, return: "❌ Failed to sync study plan to Google Calendar."
 """
 )
 
