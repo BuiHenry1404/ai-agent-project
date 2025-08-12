@@ -1,0 +1,10 @@
+autogen_agentchat==0.7.2
+autogen_core==0.7.2
+autogen_ext==0.7.2
+fastapi==0.116.1
+google_api_python_client==2.176.0
+google_auth_oauthlib==1.2.2
+protobuf==6.31.1
+pydantic==2.11.7
+python-dotenv==1.1.1
+uvicorn==0.35.0
