@@ -1,0 +1,7 @@
+{
+  "task_type": "study_planning",
+  "user_message": "Xin chào. tôi muốn học python lúc 19h - 21h ngày 30/8/2025",
+  "llm_provider": "gemini",
+  "max_turns": 10,
+  "user_id": "string"
+}
